@@ -1,0 +1,15 @@
+[Unit]
+Description=Training Flask Application
+After=network.target
+
+[Service]
+Type=simple
+User=training
+WorkingDirectory=/opt/training-app/training-project
+EnvironmentFile=/opt/training-app/training-project/.env
+ExecStart=/opt/training-app/training-project/venv/bin/python app.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
