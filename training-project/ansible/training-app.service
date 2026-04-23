@@ -5,9 +5,9 @@ After=network.target
 [Service]
 Type=simple
 User=training
-WorkingDirectory=/opt/training-app/training-project
-EnvironmentFile=/opt/training-app/training-project/.env
-ExecStart=/opt/training-app/training-project/venv/bin/python app.py
+WorkingDirectory=/opt/training-app
+EnvironmentFile=/opt/training-app/.env
+ExecStart=/opt/training-app/venv/bin/python app.py
 Restart=on-failure
 RestartSec=5
 
