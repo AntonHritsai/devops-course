@@ -1,6 +1,7 @@
-# Work in progress
-
 # Тема 9: Автоматизація конвеєра — CI/CD — Лабораторна робота
+
+> **Статус:** Work in Progress
+> Поточний статус: лабораторна ще в роботі, тому окремі кроки або формулювання можуть змінитися.
 
 > **Файл для студентів.** Практична частина до теорії `09_CI_CD_Theory.md`.
 
@@ -11,8 +12,6 @@
 Налаштувати перший CI/CD pipeline для `training-project`: автоматично перевіряти Ansible playbook, запускати тест Flask-додатку і підготувати безпечний deploy через GitHub Actions та Ansible. Після виконання роботи студент матиме workflow-файл, який запускається при `push` та Pull Request і не дозволяє деплоїти код, якщо перевірки не пройшли.
 
 **Контекст:** У Темах 6-8 ми вже навчилися розгортати застосунок вручну однією командою `ansible-playbook`: Ansible готує сервер, systemd запускає Flask-сервіс, Docker Compose піднімає PostgreSQL. У цій роботі ми автоматизуємо наступний рівень: не самі налаштування сервера, а момент, коли ці налаштування мають запускатися.
-
-> **Важлива мережна реальність:** GitHub-hosted runner працює в хмарі GitHub і не бачить вашу локальну Vagrant VM з адресою `192.168.56.10`. Тому CI-частина лабораторної працює для всіх одразу, а реальний CD-деплой на локальну VM потребує self-hosted runner на вашому комп'ютері або публічного VPS. Це не помилка GitHub Actions — це нормальне обмеження приватної локальної мережі.
 
 ---
 
@@ -65,17 +64,31 @@ touch tests/test_app.py
 Відкрийте `tests/test_app.py` і додайте:
 
 ```python
+# Імпортуємо Flask-застосунок із головного файлу проєкту
 from app import app
 
 
 def test_health_endpoint():
+    # Створюємо тестового клієнта Flask без запуску реального сервера
     client = app.test_client()
 
+    # Імітуємо HTTP-запит до endpoint /health
     response = client.get("/health")
 
+    # Перевіряємо, що endpoint відповів успішно
     assert response.status_code == 200
+
+    # Перевіряємо, що застосунок повернув очікуваний JSON
     assert response.get_json() == {"status": "ok"}
 ```
+
+Цей файл імітує дуже просту, але типову ситуацію CI: після чергової зміни коду pipeline автоматично перевіряє, що базовий endpoint застосунку все ще працює правильно.
+
+Тут `assert` означає перевірку очікуваного результату:
+- `assert response.status_code == 200` перевіряє, що endpoint `/health` відповів без помилки.
+- `assert response.get_json() == {"status": "ok"}` перевіряє, що застосунок повернув саме той JSON, який ми очікуємо.
+
+Якщо хоча б одна з цих перевірок не виконується, `pytest` позначає тест як failed.
 
 Створіть файл залежностей для розробки:
 
@@ -121,7 +134,7 @@ pytest -q
 
 **Очікуваний результат:** один тест пройшов успішно.
 
-Тепер перевіримо Ansible playbook:
+Тепер перевіримо Ansible playbook локально, у вашій папці з репозиторієм. На цьому етапі ми ще не запускаємо його на віртуальній машині і не виконуємо deploy. Ми лише перевіряємо сам файл `playbook.yml` як код: чи немає синтаксичних помилок і чи `ansible-lint` не бачить базових проблем.
 
 ```bash
 # Встановлюємо інструменти для перевірки Ansible
@@ -143,11 +156,12 @@ ansible-lint --profile min playbook.yml
 
 ### Крок 4: Створення GitHub Actions workflow
 
-Workflow-файли живуть у каталозі `.github/workflows/` у корені репозиторію. Саме Git-репозиторій є single source of truth для pipeline.
+У нашому випадку студенти пушать на GitHub не лише `training-project`, а весь репозиторій `devops-course`. Тому workflow-файли треба створювати не всередині `training-project`, а в корені репозиторію `devops-course`, у каталозі `.github/workflows/`. GitHub Actions читає workflow тільки звідти.
 
-На **хості**, у корені `training-project`:
+Тому на **хості** перейдіть у корінь репозиторію `devops-course` і створіть файл там:
 
 ```bash
+cd ~/devops-course/
 mkdir -p .github/workflows
 touch .github/workflows/ci-cd.yml
 ```
@@ -182,10 +196,11 @@ jobs:
         run: pip install ansible ansible-lint
 
       - name: Check Ansible syntax
+        working-directory: training-project
         run: cd ansible && ansible-playbook playbook.yml --syntax-check
 
       - name: Run ansible-lint
-        run: ansible-lint --profile min ansible/playbook.yml
+        run: ansible-lint --profile min training-project/ansible/playbook.yml
 
   test:
     name: Test Flask app
@@ -201,9 +216,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install Python dependencies
-        run: pip install -r requirements-dev.txt
+        run: pip install -r training-project/requirements-dev.txt
 
       - name: Run tests
+        working-directory: training-project
         run: pytest -q
 
   deploy:
@@ -233,13 +249,13 @@ jobs:
 
       - name: Create CI inventory
         run: |
-          cat > ansible/ci_inventory.ini <<EOF
+          cat > training-project/ansible/ci_inventory.ini <<EOF
           [devservers]
           devvm ansible_host=${{ secrets.SERVER_IP }} ansible_user=${{ secrets.SERVER_USER }} ansible_ssh_private_key_file=$HOME/.ssh/deploy_key
           EOF
 
       - name: Run Ansible deploy
-        run: ansible-playbook -i ansible/ci_inventory.ini ansible/playbook.yml -e "db_password=${{ secrets.POSTGRES_PASSWORD }}"
+        run: ansible-playbook -i training-project/ansible/ci_inventory.ini training-project/ansible/playbook.yml -e "db_password=${{ secrets.POSTGRES_PASSWORD }}"
 ```
 
 **Що тут важливо:**
@@ -256,15 +272,16 @@ jobs:
 
 Збережемо тести та workflow у Git і відправимо на GitHub.
 
-На **хості**, у корені `training-project`:
+На **хості**, у корені репозиторію `devops-course`:
 
 ```bash
-git add tests/test_app.py requirements-dev.txt .github/workflows/ci-cd.yml .gitignore
+cd ~/devops-course/
+git add training-project/tests/test_app.py training-project/requirements-dev.txt .github/workflows/ci-cd.yml training-project/.gitignore
 git commit -m "Add CI/CD workflow for training project"
 git push
 ```
 
-Відкрийте ваш репозиторій на GitHub:
+Після `git push` відкрийте свій репозиторій на GitHub, перейдіть на вкладку `Actions` і відкрийте workflow `CI/CD Pipeline`. Саме там ви побачите, чи запустилися jobs і з яким результатом вони завершилися.
 
 ```text
 Actions → CI/CD Pipeline
@@ -276,37 +293,39 @@ Actions → CI/CD Pipeline
 
 ### Крок 6: Перевірка захисного механізму CI
 
-Навмисно створимо помилку в тесті, щоб побачити, що pipeline справді зупиняє неправильні зміни.
+Навмисно створимо помилку в самому застосунку, щоб побачити, що pipeline справді зупиняє неправильні зміни.
 
-На **хості** змініть у `tests/test_app.py` очікуваний статус:
+У Кроці 2 ми написали тест, який перевіряє, що endpoint `/health` повертає JSON `{"status": "ok"}`. Тепер спеціально зламаємо застосунок: змінимо відповідь endpoint так, щоб вона більше не відповідала очікуванню тесту. Це імітує реальну регресію в коді після невдалого коміту.
+
+На **хості** відкрийте `app.py` і змініть відповідь endpoint `/health`:
 
 ```python
-assert response.get_json() == {"status": "broken"}
+return jsonify({"status": "broken"})
 ```
 
 Зафіксуйте і відправте зміну:
 
 ```bash
-git add tests/test_app.py
-git commit -m "Break health endpoint test intentionally"
+git add app.py
+git commit -m "Break health endpoint intentionally"
 git push
 ```
 
-Відкрийте `Actions` на GitHub.
+Після цього відкрийте на GitHub вкладку `Actions` і workflow `CI/CD Pipeline`.
 
-**Очікуваний результат:** job `Test Flask app` має впасти. Це добре: CI знайшов проблему до деплою.
+**Очікуваний результат:** job `Test Flask app` має впасти, тому що тест усе ще очікує `{"status": "ok"}`, а застосунок тепер повертає `{"status": "broken"}`. Це добре: CI знайшов реальну проблему в коді до деплою.
 
-Тепер поверніть правильне значення:
+Тепер поверніть правильну відповідь у `app.py`:
 
 ```python
-assert response.get_json() == {"status": "ok"}
+return jsonify({"status": "ok"})
 ```
 
 Зафіксуйте виправлення:
 
 ```bash
-git add tests/test_app.py
-git commit -m "Fix health endpoint test"
+git add app.py
+git commit -m "Fix health endpoint"
 git push
 ```
 
@@ -370,6 +389,14 @@ cat ~/.ssh/training_ci_cd
       │
 GitHub-hosted runner ──────X    доступу немає
 ```
+
+Це і є головна відмінність між нашою навчальною лабораторією та реальною production-ситуацією.
+
+У лабораторії сервером є **локальна Vagrant VM**. Вона існує тільки на вашому комп'ютері або у вашій приватній мережі VirtualBox/Vagrant. Адреса `192.168.56.10` не маршрутизується через Інтернет, тому GitHub її просто не бачить.
+
+У реальному проєкті сервер зазвичай є **публічно доступною хмарною VM або VPS**. У неї є публічний IP або DNS-ім'я, до якого GitHub Actions може підключитися через Інтернет по SSH. У такому сценарії GitHub-hosted runner справді може виконати деплой напряму: забрати код, підключитися до сервера і запустити `ansible-playbook`.
+
+Тобто проблема не в тому, що GitHub Actions "не вміє" деплоїти через SSH. Навпаки, у реальних проєктах це звичайний сценарій. Обмеження виникає саме тому, що в лабораторії сервер навмисно знаходиться у вашій локальній приватній мережі, а не в публічній хмарі.
 
 Тому в нашому workflow:
 
@@ -470,7 +497,7 @@ git pull
 - [ ] GitHub Actions запускає `lint` і `test` при Pull Request.
 - [ ] `deploy` не запускається, якщо `lint` або `test` впали.
 - [ ] Секрети для CD зберігаються у GitHub Secrets, а не в Git.
-- [ ] Ви розумієте, чому локальна Vagrant VM потребує self-hosted runner для реального автодеплою.
+- [ ] Ви розумієте, чому GitHub не може напряму виконати автодеплой на вашу локальну Vagrant VM.
 
 Фінальна перевірка:
 
