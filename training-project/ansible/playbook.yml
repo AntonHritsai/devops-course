@@ -26,6 +26,21 @@
           - python3-venv
         state: present
         update_cache: yes
+
+    - name: Встановити Docker
+      apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        state: present
+        update_cache: yes
+
+    - name: Додати користувача training до групи docker
+      user:
+        name: "{{ app_user }}"
+        groups: docker
+        append: yes
+
     - name: Створити директорію додатку
       file:
         path: "{{ app_dir }}"
@@ -65,9 +80,19 @@
         group: "{{ app_user }}"
         mode: '0644'
 
+    - name: Скопіювати docker-compose.yml
+      copy:
+        src: "{{ playbook_dir }}/../docker-compose.yml"
+        dest: "{{ app_dir }}/docker-compose.yml"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+
     - name: Створити файл .env
       copy:
-        content: "PORT=5000\n"
+        content: |
+          PORT=5000
+          POSTGRES_PASSWORD={{ db_password }}
         dest: "{{ app_dir }}/.env"
         owner: "{{ app_user }}"
         group: "{{ app_user }}"
@@ -101,6 +126,11 @@
       systemd:
         name: training-app
         state: started
+
+    - name: Запустити PostgreSQL контейнер
+      command: docker compose up -d
+      args:
+        chdir: "{{ app_dir }}"
 
   handlers:
     - name: Reload systemd
